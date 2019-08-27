@@ -2,6 +2,10 @@
 import requests
 import re
 import json
+import sys
+import os
+import time
+from urllib.parse import urlparse, parse_qsl
 
 
 class Qzone(object):
@@ -15,18 +19,26 @@ class Qzone(object):
         cookies: Cookies that maintain login status.
     """
 
-    def __init__(self, u='', p='', cookies={}, verify=True, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36'}):
-        """Initialize class by user information."""
+    def __init__(self, u='', p='', cookies=None, verify=True, headers=None):
+        """
+        Initialize class by user information.
+        """
         self.u = u
         self.p = p
+        self.nick = ''
         self.verify = verify
-        self.__headers = headers
+        self.__headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36'} if None==headers else headers
         self.cookies = cookies
-        self.g_tk = ''
+        self.g_tk = 0
         self.qzonetoken = ''
 
     def login(self, u='', p=''):
-        """Log in and get cookies"""
+        """
+        Log in and get cookies
+        :return:
+        """
+        if {}==self.cookies
+
         if '' == self.u or '' == self.p:
             if '' == u or '' == p:
                 raise ValueError('QQ number and password are required!')
@@ -70,8 +82,9 @@ class Qzone(object):
             ptuiCB = r.text.strip("ptuiCB( )").replace("'", '').split(',')
 
             # 检验登录情况
-            if '登录成功！' == ptuiCB[4]:
-                print('[+]%s' % ptuiCB[4])
+            if '0' == ptuiCB[0]:
+                self.nick = ptuiCB[5]
+                print('[+]%s:%s' % (ptuiCB[5], ptuiCB[4]))
                 s.get(ptuiCB[2], headers=headers, verify=self.verify)
                 self.cookies = s.cookies
                 self.__get_gtk()
@@ -80,10 +93,14 @@ class Qzone(object):
                 print('[-]%s' % ptuiCB[4])
         else:
             print('[-]登录失败！需要输入验证码！')
-            print('[+]已自动为您切换为扫码登录！')
+            print('[*]已自动为您切换为扫码登录！')
             qrlogin()
 
-    def qrlogin(self, s=3):
+    def qrlogin(self, size=3, path='qrcode.png'):
+        """
+        扫码登录并获取cookies
+        :return:
+        """
         headers = self.__headers
         s = requests.Session()
 
@@ -96,19 +113,21 @@ class Qzone(object):
         url = 'https://ssl.ptlogin2.qq.com/ptqrshow'
         params = {
             "appid": "549000912",
-            #"e": "2",
-            #"l": "M",
-            "s": s,  # 二维码尺寸
-            #"d": "72",
-            #"v": "4",
-            #"t": "0.06670120586595374",
-            #"daid": "5",
-            #"pt_3rd_aid": "0"
+            # "e": "2",
+            # "l": "M",
+            "s": size,  # 二维码尺寸
+            # "d": "72",
+            # "v": "4",
+            # "t": "0.06670120586595374",
+            # "daid": "5",
+            # "pt_3rd_aid": "0"
         }
         r = s.get(url, params=params, headers=headers, verify=self.verify)
-        with open('qrcode.png', 'wb') as f:
+        with open(path, 'wb') as f:
             f.write(r.content)
-        ptqrtoken = get_qrtoken(s.cookies['qrsig'])
+        print(s.cookies)
+        ptqrtoken = self.__get_qrtoken(s.cookies['qrsig'])
+        self.__open_qrcode(path)
 
         # 检验登录状态
         while True:
@@ -116,57 +135,68 @@ class Qzone(object):
             params = {
                 "u1": "https://qzs.qzone.qq.com/qzone/v5/loginsucc.html?para=izone",
                 "ptqrtoken": ptqrtoken,
-                #"ptredirect": "0",
-                #"h": "1",
-                #"t": "1",
-                #"g": "1",
+                # "ptredirect": "0",
+                # "h": "1",
+                # "t": "1",
+                # "g": "1",
                 "from_ui": "1",
-                #"ptlang": "2052",
-                #"action": "0-0-%d" % (date_to_millis(datetime.datetime.utcnow()) - start_time),
-                #"js_ver": "19081313",
-                #"js_type": "1",
-                #"login_sig": s.cookies['pt_login_sig'],
-                #"pt_uistyle": "40",
+                # "ptlang": "2052",
+                # "action": "0-0-%d" % (date_to_millis(datetime.datetime.utcnow()) - start_time),
+                # "js_ver": "19081313",
+                # "js_type": "1",
+                # "login_sig": s.cookies['pt_login_sig'],
+                # "pt_uistyle": "40",
                 "aid": "549000912",
-                #"daid": "5",
+                # "daid": "5",
                 # "ptdrvs": s.cookies['ptdrvs'],
-                #"has_onekey": "1"
+                # "has_onekey": "1"
             }
             r = s.get(url, params=params, headers=headers, verify=self.verify)
             ptuiCB = r.text.strip("ptuiCB( )").replace("'", '').split(',')
             # 65: QRCode 失效, 0: 验证成功, 66: 未失效, 67: 验证中
             if '0' == ptuiCB[0]:
-                print('[+]%s' % ptuiCB[4])
+                # 删除QRCode文件
+                if os.path.exists(path):
+                    os.remove(path)
+                    print('[+]已删除二维码！')
+
+                # 获取QQ号
+                if ''==self.u:
+                    self.u = re.search('uin=([0-9]+?)&', ptuiCB[2]).group(1)
+
+                self.nick = ptuiCB[5]
+                print('[+]%s:%s' % (ptuiCB[5], ptuiCB[4]))
                 s.get(ptuiCB[2], headers=headers, verify=self.verify)
                 self.cookies = s.cookies
                 self.__get_gtk()
                 self.__get_qzonetoken()
                 break
-            elif '65'==ptuiCB[0]:
-                print('[-]%s' %ptuiCB[4])
-                print('[+]检测到二维码已失效，已为您重新获取')
+            elif '65' == ptuiCB[0]:
+                print('[-]%s' % ptuiCB[4])
+                print('[*]检测到二维码已失效，已为您重新获取')
 
                 # 获取二维码
                 url = 'https://ssl.ptlogin2.qq.com/ptqrshow'
                 params = {
                     "appid": "549000912",
-                    #"e": "2",
-                    #"l": "M",
+                    # "e": "2",
+                    # "l": "M",
                     "s": s,  # 二维码尺寸
-                    #"d": "72",
-                    #"v": "4",
-                    #"t": "0.06670120586595374",
-                    #"daid": "5",
-                    #"pt_3rd_aid": "0"
+                    # "d": "72",
+                    # "v": "4",
+                    # "t": "0.06670120586595374",
+                    # "daid": "5",
+                    # "pt_3rd_aid": "0"
                 }
-                r = s.get(url, params=params, headers=headers, verify=self.verify)
+                r = s.get(url, params=params,
+                          headers=headers, verify=self.verify)
                 with open('qrcode.png', 'wb') as f:
                     f.write(r.content)
-                ptqrtoken = get_qrtoken(s.cookies['qrsig'])
+                ptqrtoken = self.__get_qrtoken(s.cookies['qrsig'])
+                self.__open_qrcode(path)
             else:
                 print('[-]%s' % ptuiCB[4])
             time.sleep(5)
-
 
     def __get_gtk(self):
         skey = self.cookies['skey']
@@ -185,13 +215,35 @@ class Qzone(object):
         qzonetoken = result.group(1)
         self.qzonetoken = qzonetoken
 
-    def __get_qrtoken(qrsig):
+    def __get_qrtoken(self, qrsig):
         e = 0
         for i in qrsig:
             e += (e << 5) + ord(i)
         return 2147483647 & e
 
+    def __open_qrcode(self, path):
+        # for mac os
+        if sys.platform.find('darwin') >= 0:
+            subprocess.call(['open', path])
+        # for linux
+        elif sys.platform.find('linux') >= 0:
+            subprocess.call(['xdg-open', path])
+        # for windows
+        elif sys.platform.find('win32') >= 0:
+            # subprocess.call(['open', QRImagePath])
+            os.startfile(path)
+        else:
+            subprocess.call(['xdg-open', path])
+        print('[*]请使用手机版QQ扫描二维码登陆')
+        print('[*]若二维码未自动弹出，请手动到以下路径寻找二维码图片:')
+        print(path)
+        print('-------------------------')
+
     def get_info(self, model=1):
+        """
+        返回字典形式的信息
+        :return:
+        """
         if 1 == model:
             result = {'u': self.u, 'p': self.p, 'cookies': {
                 k: v for k, v in self.cookies.items()}, 'g_tk': self.g_tk, 'qzonetoken': self.qzonetoken}
